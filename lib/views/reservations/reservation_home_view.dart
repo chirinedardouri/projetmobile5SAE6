@@ -21,7 +21,11 @@ class _ReservationHomeViewState extends State<ReservationHomeView> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => context.read<ReservationController>().load());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<ReservationController>().load();
+      }
+    });
   }
 
   @override
@@ -36,6 +40,14 @@ class _ReservationHomeViewState extends State<ReservationHomeView> {
         appBar: AppBar(
           title: Text(_titles[_index],
               style: const TextStyle(fontWeight: FontWeight.bold)),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.auto_awesome, color: Colors.amberAccent),
+              tooltip: 'Conseiller IA Véhicules',
+              onPressed: () =>
+                  Navigator.pushNamed(context, AppRoutes.aiRecommender),
+            ),
+          ],
           // ---------- TabBar (seulement sur "Mes réservations") ----------
           bottom: _index == 0
               ? TabBar(

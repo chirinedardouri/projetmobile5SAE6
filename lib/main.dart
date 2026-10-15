@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
+import 'controllers/car_recommendation_controller.dart';
 import 'controllers/reservation_controller.dart';
 import 'routes/app_routes.dart';
 
@@ -12,6 +13,7 @@ Future<void> main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ReservationController()),
+        ChangeNotifierProvider(create: (_) => CarRecommendationController()),
         // les autres membres ajoutent leurs controllers ici
       ],
       child: const MyApp(),

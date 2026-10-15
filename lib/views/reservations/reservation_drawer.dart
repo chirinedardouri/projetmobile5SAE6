@@ -50,6 +50,16 @@ class AppDrawer extends StatelessWidget {
           _item(context, Icons.bar_chart, 'Statistiques', 2),
           const Divider(),
           ListTile(
+            leading: const Icon(Icons.auto_awesome, color: Colors.amber),
+            title: const Text('Conseiller IA Véhicules'),
+            subtitle: const Text('Recommandations selon votre trajet',
+                style: TextStyle(fontSize: 11)),
+            onTap: () {
+              Navigator.pop(context); // ferme le drawer
+              Navigator.pushNamed(context, AppRoutes.aiRecommender);
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.add_circle, color: Colors.teal),
             title: const Text('Nouvelle réservation'),
             onTap: () {

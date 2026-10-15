@@ -1,30 +1,27 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:gestion_reserv/main.dart';
+import 'package:gestion_reserv/controllers/car_recommendation_controller.dart';
+import 'package:gestion_reserv/views/recommendations/ai_car_recommender_view.dart';
+import 'package:provider/provider.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('AiCarRecommenderView displays input fields and button',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => CarRecommendationController()),
+        ],
+        child: const MaterialApp(
+          home: AiCarRecommenderView(),
+        ),
+      ),
+    );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Verify header and fields exist
+    expect(find.text('AI Smart Car Recommender'), findsOneWidget);
+    expect(find.text('Recommander 7 Véhicules'), findsOneWidget);
+    expect(find.byType(ElevatedButton), findsWidgets);
+    expect(find.byType(TextField), findsWidgets);
   });
 }
