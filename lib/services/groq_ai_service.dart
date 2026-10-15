@@ -23,7 +23,7 @@ class GroqAiService {
   static const String defaultModel = 'openai/gpt-oss-20b';
   static const String fallbackModel = 'llama-3.3-70b-versatile';
 
-  static const String apiKeyConstant = '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';
+  //static const String apiKeyConstant = String.fromEnvironment('');
 
   final String? apiKey;
   final String model;
