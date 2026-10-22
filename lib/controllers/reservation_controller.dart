@@ -36,6 +36,40 @@ class ReservationController extends ChangeNotifier {
   bool canModify(Reservation r) =>
       r.status == 'EN_ATTENTE' || r.status == 'CONFIRMEE';
 
+  /// Retourne toutes les réservations actives (non annulées) pour un véhicule donné.
+  List<Reservation> getActiveReservationsForVehicle(int vehicleId, {int? excludeId}) =>
+      reservations
+          .where((r) =>
+              r.vehicleId == vehicleId &&
+              r.status != 'ANNULEE' &&
+              (excludeId == null || r.id != excludeId))
+          .toList();
+
+  /// Vérifie si une date précise est déjà réservée pour un véhicule donné (style Airbnb).
+  bool isDateOccupied(int vehicleId, DateTime date, {int? excludeId}) {
+    final target = DateTime(date.year, date.month, date.day);
+    final active = getActiveReservationsForVehicle(vehicleId, excludeId: excludeId);
+    for (final r in active) {
+      final start = DateTime(r.startDate.year, r.startDate.month, r.startDate.day);
+      final end = DateTime(r.endDate.year, r.endDate.month, r.endDate.day);
+      if (!target.isBefore(start) && !target.isAfter(end)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Vérifie si une plage de dates [start, end] chevauche une réservation existante.
+  bool hasOverlap(int vehicleId, DateTime start, DateTime end, {int? excludeId}) {
+    final active = getActiveReservationsForVehicle(vehicleId, excludeId: excludeId);
+    for (final r in active) {
+      if (start.isBefore(r.endDate) && end.isAfter(r.startDate)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ---------- CRUD ----------
   Future<void> load() async {
     isLoading = true;
