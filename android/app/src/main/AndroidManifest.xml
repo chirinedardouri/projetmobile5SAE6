@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Notifications FCM (module Véhicules), Android 13 et plus -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:label="Ekrili Karhba"
         android:name="${applicationName}"
@@ -23,5 +25,12 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Notifications FCM (module Véhicules) : bannière en haut de l'écran -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="ekrili_alertes" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
     </application>
 </manifest>

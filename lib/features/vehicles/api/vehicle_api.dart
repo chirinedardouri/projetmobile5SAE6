@@ -86,6 +86,20 @@ class VehicleApi {
   static Future<double?> getDeposit(String vehicleId) async =>
       (await _service.getVehicle(vehicleId))?.deposit;
 
+  // ------------------------------------------------- Pour les Utilisateurs
+
+  /// À appeler par le module Utilisateurs avant de désactiver un compte
+  /// agence : null si c'est possible, sinon la raison à afficher
+  /// (un de ses véhicules est réservé ou loué).
+  static Future<String?> agencyDeactivationProblem(int agencyUserId) =>
+      _service.agencyDeactivationProblem('$agencyUserId');
+
+  /// À appeler par le module Utilisateurs avant de supprimer un compte
+  /// agence : null si c'est possible, sinon la raison à afficher
+  /// (l'agence possède encore des véhicules).
+  static Future<String?> agencyDeletionProblem(int agencyUserId) =>
+      _service.agencyDeletionProblem('$agencyUserId');
+
   // ------------------------------------------------- Pour les Réservations
 
   /// Bloque les dates d'une réservation ; renvoie l'id du blocage à

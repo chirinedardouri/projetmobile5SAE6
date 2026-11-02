@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../domain/fleet_dates.dart';
 import '../../domain/fleet_vehicle.dart';
+import '../../integrations/vehicle_links.dart';
 import 'status_chip.dart';
 import 'vehicle_photo.dart';
 
@@ -14,6 +15,7 @@ class ClientVehicleCard extends StatelessWidget {
     required this.vehicle,
     this.categoryName,
     this.agencyLabel,
+    this.availability,
     required this.onTap,
   });
 
@@ -22,6 +24,10 @@ class ClientVehicleCard extends StatelessWidget {
 
   /// Ex. « Auto Mobility Tunis · Tunis ».
   final String? agencyLabel;
+
+  /// Mention « Réservé » / « En maintenance » venant des modules
+  /// Réservations et Maintenance (voir VehicleLinks).
+  final ClientAvailability? availability;
   final VoidCallback onTap;
 
   @override
@@ -58,7 +64,8 @@ class ClientVehicleCard extends StatelessWidget {
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: StatusChip.forClient(vehicle.status),
+                      child: StatusChip.forAvailability(
+                          vehicle.status, availability),
                     ),
                   ),
                   if (vehicle.photos.length > 1)

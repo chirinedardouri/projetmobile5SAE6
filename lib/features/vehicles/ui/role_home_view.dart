@@ -3,14 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
-import '../../users/domain/user.dart';
-import '../domain/actor.dart';
+import '../../users/ui/admin_users_screen.dart';
+import '../domain/agency.dart';
 import '../domain/document_alert.dart';
 import '../domain/enums.dart';
 import '../domain/fleet_vehicle.dart';
 import '../domain/vehicle_category.dart';
 import '../domain/vehicle_filter.dart';
 import '../services/fleet_service.dart';
+import '../services/vehicle_session.dart';
 import 'admin/categories_screen.dart';
 import 'admin/stats_screen.dart';
 import 'admin/validation_screen.dart';
@@ -42,13 +43,14 @@ class RoleHomeView extends StatefulWidget {
 
 class _RoleHomeViewState extends State<RoleHomeView> {
   final FleetService _service = FleetService.instance;
+  final VehicleSession _session = VehicleSession.instance;
   final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
   int _requestId = 0;
 
   VehicleFilter _filter = const VehicleFilter();
   List<FleetVehicle> _vehicles = const [];
-  Map<int, User> _agencies = const {};
+  Map<String, Agency> _agencies = const {};
   Map<String, VehicleCategory> _categories = const {};
   List<String> _cities = const [];
   FleetStats? _stats;
@@ -56,10 +58,7 @@ class _RoleHomeViewState extends State<RoleHomeView> {
   bool _loading = true;
   String? _error;
 
-  final Set<String> _dismissedAlertKeys = {};
-
-  Actor get _actor => const Actor.admin();
-  bool get _isAdmin => true;
+  bool get _isAdmin => _session.actor.isAdmin;
 
   @override
   void initState() {
@@ -78,7 +77,7 @@ class _RoleHomeViewState extends State<RoleHomeView> {
 
   Future<void> _load() async {
     final request = ++_requestId;
-    final actor = _actor;
+    final actor = _session.actor;
     try {
       final vehicles = await _service.search(_filter, actor);
       final stats = await _service.computeStats(agencyId: actor.agencyId);
@@ -138,11 +137,11 @@ class _RoleHomeViewState extends State<RoleHomeView> {
   /// Notifications pas encore fermées pendant cette connexion.
   List<DocumentAlert> get _newAlerts => [
         for (final alert in _alerts)
-          if (!_dismissedAlertKeys.contains(alert.key)) alert,
+          if (!_session.isAlertDismissed(alert.key)) alert,
       ];
 
   void _dismissAlerts() {
-    setState(() => _dismissedAlertKeys.addAll(_alerts.map((a) => a.key)));
+    setState(() => _session.dismissAlerts(_alerts.map((a) => a.key)));
   }
 
   void _openAlerts() {
@@ -168,6 +167,15 @@ class _RoleHomeViewState extends State<RoleHomeView> {
     );
   }
 
+  /// Les agences sont des comptes : l'administrateur les gère dans l'écran
+  /// du module Utilisateurs. Au retour, la liste des agences est relue.
+  Future<void> _openAgencies() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const AdminUsersScreen()),
+    );
+    if (mounted) _load();
+  }
+
   void _openForm({String? vehicleId}) {
     Navigator.of(context).push(
       MaterialPageRoute<VehicleFormResult>(
@@ -188,7 +196,7 @@ class _RoleHomeViewState extends State<RoleHomeView> {
     if (!ok || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await _service.deleteVehicle(vehicle.id, _actor);
+      await _service.deleteVehicle(vehicle.id, _session.actor);
       showFleetSnack(messenger, '${vehicle.fullName} supprimé');
     } catch (e) {
       showFleetSnack(messenger, fleetErrorMessage(e), error: true);
@@ -269,8 +277,9 @@ class _RoleHomeViewState extends State<RoleHomeView> {
   }
 
   Widget _buildHeader() {
+    final agency = _session.agency;
     final total = _stats?.total;
-    const scope = 'Toutes les agences';
+    final scope = agency?.name ?? 'Toutes les agences';
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -415,7 +424,7 @@ class _RoleHomeViewState extends State<RoleHomeView> {
         icon: Icons.storefront_outlined,
         title: 'Agences',
         value: '${_agencies.length} agence(s)',
-        onTap: () {},
+        onTap: _openAgencies,
       ),
       _ShortcutTile(
         icon: Icons.category_outlined,
@@ -637,7 +646,7 @@ class _RoleHomeViewState extends State<RoleHomeView> {
         FleetVehicleTile(
           vehicle: vehicle,
           categoryName: _categories[vehicle.categoryId]?.name,
-          agencyName: _isAdmin ? _agencies[vehicle.agencyId]?.displayName : null,
+          agencyName: _isAdmin ? _agencies[vehicle.agencyId]?.name : null,
           showPlate: true,
           showValidation: true,
           onTap: () => _openDetails(vehicle),

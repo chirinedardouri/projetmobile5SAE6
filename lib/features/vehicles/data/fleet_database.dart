@@ -11,6 +11,9 @@ import 'seed_data.dart';
 /// - Création de la table user_history (audit trail)
 /// - Table vehicles : FK agency_id INTEGER REFERENCES users(id)
 /// - PRAGMA foreign_keys = ON
+///
+/// Version 3 : données de démonstration du module Véhicules remises
+/// (catégories, véhicules, documents…) avec les comptes de la version 2.
 class FleetDatabase {
   FleetDatabase({
     DatabaseFactory? factory,
@@ -22,7 +25,7 @@ class FleetDatabase {
         _clock = clock ?? DateTime.now;
 
   static const String fileName = 'ekrili_vehicles.db';
-  static const int schemaVersion = 2;
+  static const int schemaVersion = 3;
   static const String _memoryPath = ':memory:';
 
   final DatabaseFactory? _factory;
@@ -49,7 +52,7 @@ class FleetDatabase {
           if (withSeedData) await SeedData.insert(db, _clock());
         },
         onUpgrade: (db, oldVersion, newVersion) async {
-          if (oldVersion < 2) {
+          if (oldVersion < 3) {
             await _dropAllTables(db);
             await _createSchema(db);
             if (withSeedData) await SeedData.insert(db, _clock());

@@ -18,17 +18,28 @@ void main() {
   final now = DateTime(2026, 10, 22, 10);
   const admin = Actor.admin();
   const client = Actor.client();
-  const tunis = Actor.agency(2);
-  const sousse = Actor.agency(3);
-  const sfax = Actor.agency(4);
+  // Les agences sont les comptes 2, 3 et 4 de la table users
+  // (voir SeedData) : Tunis, Sousse et Sfax.
+  const tunis = Actor.agency('2');
+  const sousse = Actor.agency('3');
+  const sfax = Actor.agency('4');
   const reservations = Actor.system('Réservations');
 
+  late FleetDatabase database;
   late FleetService service;
 
   setUpAll(sqfliteFfiInit);
 
+  /// Active / désactive un compte agence comme le ferait le module
+  /// Utilisateurs (colonne statut de la table users).
+  Future<void> setAgencyStatus(String agencyId, String statut) async {
+    final db = await database.database;
+    await db.update('users', {'statut': statut},
+        where: 'id = ?', whereArgs: [int.parse(agencyId)]);
+  }
+
   setUp(() async {
-    final database = FleetDatabase(
+    database = FleetDatabase(
       factory: databaseFactoryFfi,
       path: ':memory:',
       clock: () => now,
@@ -43,7 +54,7 @@ void main() {
   tearDown(() => service.closeDatabase());
 
   FleetVehicle draft({
-    int agencyId = 3,
+    String agencyId = '3',
     String categoryId = 'cat_citadine',
     String plate = '260 TUN 1111',
     double price = 80,
@@ -80,9 +91,20 @@ void main() {
       expect(ids, isNot(contains('veh_toyota_yaris'))); // hors service
     });
 
+    test('catalogue : les véhicules en maintenance restent affichés',
+        () async {
+      final shown = await service.search(const VehicleFilter(), client,
+          withMaintenance: true);
+      final ids = shown.map((v) => v.id).toSet();
+      expect(ids, hasLength(8));
+      expect(ids, contains('veh_peugeot_208')); // maintenance
+      expect(ids, isNot(contains('veh_dacia_sandero'))); // en attente
+      expect(ids, isNot(contains('veh_toyota_yaris'))); // hors service
+    });
+
     test("une agence ne voit que sa flotte", () async {
       final mine = await service.search(const VehicleFilter(), sousse);
-      expect(mine.map((v) => v.agencyId).toSet(), {3});
+      expect(mine.map((v) => v.agencyId).toSet(), {'3'});
       expect(mine, hasLength(3));
     });
 
@@ -153,7 +175,7 @@ void main() {
     test("un véhicule ajouté par une agence attend la validation", () async {
       final created = await service.createVehicle(draft(), sousse);
       expect(created.validation, ValidationStatus.enAttente);
-      expect(created.agencyId, 3);
+      expect(created.agencyId, '3');
       final history = await service.history(created.id);
       expect(history.single.action, HistoryAction.creation);
     });
@@ -361,22 +383,23 @@ void main() {
   group('Multi-agences et validation', () {
     test("transfert par l'admin, historisé", () async {
       final moved =
-          await service.transferVehicle('veh_renault_clio', 2, admin);
-      expect(moved.agencyId, 2);
+          await service.transferVehicle('veh_renault_clio', '2', admin);
+      expect(moved.agencyId, '2');
       final history = await service.history('veh_renault_clio');
       expect(history.first.action, HistoryAction.transfert);
+      expect(history.first.oldValue, 'Sahel Rent Car');
     });
 
     test('une agence ne peut pas transférer', () async {
       await expectLater(
-        service.transferVehicle('veh_renault_clio', 2, sousse),
+        service.transferVehicle('veh_renault_clio', '2', sousse),
         throwsA(isA<FleetPermissionException>()),
       );
     });
 
     test('pas de transfert pour un véhicule réservé', () async {
       await expectLater(
-        service.transferVehicle('veh_hyundai_tucson', 2, admin),
+        service.transferVehicle('veh_hyundai_tucson', '2', admin),
         throwsA(isA<FleetRuleException>()),
       );
     });
@@ -394,6 +417,26 @@ void main() {
             approve: false, actor: admin),
         throwsA(isA<FleetValidationException>()),
       );
+    });
+
+    test('agence désactivée : ses véhicules sortent du catalogue', () async {
+      await setAgencyStatus('3', 'DESACTIVE');
+      final visible = await service.search(const VehicleFilter(), client);
+      expect(visible.map((v) => v.agencyId), isNot(contains('3')));
+    });
+
+    test('pas de désactivation si un véhicule est loué', () async {
+      // Le compte agence est désactivé dans le module Utilisateurs, qui
+      // demande d'abord l'accord du module Véhicules (VehicleApi).
+      expect(await service.agencyDeactivationProblem('2'),
+          contains('occupés'));
+      // Sousse n'a aucun véhicule réservé ou loué.
+      expect(await service.agencyDeactivationProblem('3'), isNull);
+    });
+
+    test("pas de suppression d'une agence qui a des véhicules", () async {
+      expect(await service.agencyDeletionProblem('4'),
+          contains('3 véhicule(s)'));
     });
 
     test('validation impossible sans assurance ni visite technique',
@@ -440,19 +483,55 @@ void main() {
 
     test('nombre de véhicules par agence et par catégorie', () async {
       expect(await service.vehicleCountByAgency(),
-          {2: 4, 3: 3, 4: 3});
+          {'2': 4, '3': 3, '4': 3});
       final byCategory = await service.vehicleCountByCategory();
       expect(byCategory.values.fold(0, (a, b) => a + b), 10);
     });
   });
 
-  group('Agences', () {
-    test('consultation des agences actives', () async {
-      final list = await service.agencies();
-      expect(list.length, greaterThanOrEqualTo(3));
-      final agency2 = await service.agency(2);
-      expect(agency2, isNotNull);
-      expect(agency2!.displayName, contains('Tunis'));
+  group('Agences (comptes du module Utilisateurs)', () {
+    test('les agences sont les comptes de rôle Agence', () async {
+      final agencies = await service.agencies();
+      expect(agencies.map((a) => a.name), [
+        'Auto Mobility Tunis',
+        'Sahel Rent Car',
+        'Sfax Location Auto',
+      ]);
+      final tunisAgency = await service.agency('2');
+      expect(tunisAgency!.city, 'Tunis');
+      expect(tunisAgency.address, 'Rue du Lac Léman, Les Berges du Lac');
+      // Un compte client ou admin n'est pas une agence.
+      expect(await service.agency('5'), isNull);
+      expect(await service.agency('1'), isNull);
+    });
+
+    test('compte agence désactivé : hors des agences actives', () async {
+      await setAgencyStatus('4', 'DESACTIVE');
+      final active = await service.agencies(activeOnly: true);
+      expect(active.map((a) => a.id), isNot(contains('4')));
+      expect(await service.cities(), ['Sousse', 'Tunis']);
+    });
+
+    test('filtre par ville : déduite de l\'adresse du compte', () async {
+      final inSfax = await service.search(
+          const VehicleFilter(city: 'Sfax'), admin);
+      expect(inSfax.map((v) => v.agencyId).toSet(), {'4'});
+      // « Route de Tunis km 3, Sfax » n'est pas à Tunis.
+      final inTunis = await service.search(
+          const VehicleFilter(city: 'Tunis'), admin);
+      expect(inTunis.map((v) => v.agencyId).toSet(), {'2'});
+    });
+
+    test('filtre par agence : le client oui, une agence reste chez elle',
+        () async {
+      // Le client peut filtrer le catalogue par agence.
+      final fromSousse = await service.search(
+          const VehicleFilter(agencyId: '3'), client);
+      expect(fromSousse.map((v) => v.agencyId).toSet(), {'3'});
+      // Une agence reste limitée à sa flotte, même avec ce filtre.
+      final other = await service.search(
+          const VehicleFilter(agencyId: '3'), tunis);
+      expect(other, isEmpty);
     });
   });
 
@@ -599,7 +678,7 @@ void main() {
   });
 
   test("statistiques d'une agence", () async {
-    final stats = await service.computeStats(agencyId: 2);
+    final stats = await service.computeStats(agencyId: '2');
     expect(stats.total, 4);
     expect(stats.occupied, 1); // Audi A4 louée
     expect(stats.count(VehicleStatus.maintenance), 1); // Peugeot 208

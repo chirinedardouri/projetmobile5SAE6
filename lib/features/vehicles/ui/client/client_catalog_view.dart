@@ -3,21 +3,27 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
-import '../../../users/domain/user.dart';
 import '../../domain/actor.dart';
+import '../../domain/agency.dart';
 import '../../domain/enums.dart';
 import '../../domain/fleet_vehicle.dart';
 import '../../domain/vehicle_category.dart';
 import '../../domain/vehicle_filter.dart';
+import '../../integrations/vehicle_links.dart';
 import '../../services/fleet_service.dart';
 import '../details/vehicle_details_screen.dart';
+import '../feedback.dart';
 import '../widgets/availability_calendar.dart';
 import '../widgets/client_vehicle_card.dart';
 import '../widgets/vehicle_filter_sheet.dart';
 
-/// Catalogue du client : recherche, catégories, filtres avancés, tri.
-/// Consultation uniquement ; la liste se met à jour en direct quand une
-/// agence ou l'administrateur modifie la flotte.
+/// Catalogue du client : recherche, catégories, filtres avancés (dont
+/// l'agence), tri. Consultation uniquement ; la liste se met à jour en
+/// direct quand une agence ou l'administrateur modifie la flotte.
+///
+/// Les véhicules réservés et ceux en maintenance restent affichés, avec la
+/// mention « Réservé » ou « En maintenance » donnée par les modules
+/// Réservations et Maintenance (voir VehicleLinks).
 class ClientCatalogView extends StatefulWidget {
   const ClientCatalogView({super.key});
 
@@ -35,7 +41,8 @@ class _ClientCatalogViewState extends State<ClientCatalogView> {
 
   VehicleFilter _filter = const VehicleFilter();
   List<FleetVehicle> _vehicles = const [];
-  Map<int, User> _agencies = const {};
+  Map<String, ClientAvailability> _availability = const {};
+  Map<String, Agency> _agencies = const {};
   List<VehicleCategory> _categories = const [];
   List<String> _cities = const [];
   bool _loading = true;
@@ -59,13 +66,16 @@ class _ClientCatalogViewState extends State<ClientCatalogView> {
   Future<void> _reload() async {
     final request = ++_requestId;
     try {
-      final vehicles = await _service.search(_filter, _client);
+      final vehicles =
+          await _service.search(_filter, _client, withMaintenance: true);
+      final availability = await VehicleLinks.availabilities(vehicles);
       final agencies = await _service.agencyMap();
       final categories = await _service.categories(activeOnly: true);
       final cities = await _service.cities();
       if (!mounted || request != _requestId) return;
       setState(() {
         _vehicles = vehicles;
+        _availability = availability;
         _agencies = agencies;
         _categories = categories;
         _cities = cities;
@@ -100,6 +110,11 @@ class _ClientCatalogViewState extends State<ClientCatalogView> {
       current: _filter,
       categories: _categories,
       cities: _cities,
+      // Le client peut voir les véhicules de chaque agence.
+      agencies: [
+        for (final agency in _agencies.values)
+          if (agency.isActive) agency,
+      ],
     );
     if (result != null && mounted) {
       _applyFilter(result.copyWith(query: _searchController.text));
@@ -112,6 +127,12 @@ class _ClientCatalogViewState extends State<ClientCatalogView> {
   }
 
   void _openDetails(FleetVehicle vehicle) {
+    // En maintenance : visible dans le catalogue mais pas encore louable.
+    if (vehicle.status == VehicleStatus.maintenance) {
+      showFleetSnack(ScaffoldMessenger.of(context),
+          '${vehicle.fullName} est en maintenance pour le moment.');
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => VehicleDetailsScreen(vehicleId: vehicle.id),
@@ -153,8 +174,8 @@ class _ClientCatalogViewState extends State<ClientCatalogView> {
   Widget _buildHeader() {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: const [
-        Expanded(
+      children: [
+        const Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -420,6 +441,7 @@ class _ClientCatalogViewState extends State<ClientCatalogView> {
           vehicle: vehicle,
           categoryName: _categoryName(vehicle.categoryId),
           agencyLabel: _agencyLabel(vehicle.agencyId),
+          availability: _availability[vehicle.id],
           onTap: () => _openDetails(vehicle),
         ),
         const SizedBox(height: 16),
@@ -434,11 +456,9 @@ class _ClientCatalogViewState extends State<ClientCatalogView> {
     return null;
   }
 
-  String? _agencyLabel(int id) {
+  String? _agencyLabel(String id) {
     final agency = _agencies[id];
-    return agency == null
-        ? null
-        : '${agency.displayName} · ${agency.adresseAgence ?? ''}';
+    return agency == null ? null : '${agency.name} · ${agency.city}';
   }
 }
 

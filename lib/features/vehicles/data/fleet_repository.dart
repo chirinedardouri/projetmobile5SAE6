@@ -1,6 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 
-import '../../users/domain/user.dart';
+import '../domain/agency.dart';
 import '../domain/enums.dart';
 import '../domain/fleet_dates.dart';
 import '../domain/fleet_vehicle.dart';
@@ -37,53 +37,45 @@ class FleetRepository {
     return db.transaction(action);
   }
 
-  // ---------------------------------------------------------------- Agences (Users rôle AGENCE)
+  // ---------------------------------------------------------------- Agences
+  //
+  // Les agences sont les comptes du module Utilisateurs ayant le rôle
+  // AGENCE (table users). Ce module les lit seulement : la création, la
+  // modification, l'activation et la suppression des comptes se font dans
+  // le module Utilisateurs.
 
-  Future<List<User>> getAgencies({
+  /// Clé SQL d'une agence : l'identifiant de son compte (entier).
+  static Object agencyKey(String agencyId) =>
+      int.tryParse(agencyId) ?? agencyId;
+
+  Future<List<Agency>> getAgencies({
     bool activeOnly = false,
     DatabaseExecutor? txn,
   }) async {
     final db = await _exec(txn);
-    final where = StringBuffer("role = 'AGENCE'");
-    if (activeOnly) where.write(" AND statut = 'ACTIF'");
     final rows = await db.query(
       'users',
-      where: where.toString(),
-      orderBy: 'nom_agence COLLATE NOCASE, nom COLLATE NOCASE',
+      where: activeOnly
+          ? "role = 'AGENCE' AND statut = 'ACTIF'"
+          : "role = 'AGENCE'",
     );
-    return rows.map(User.fromMap).toList();
+    final agencies = rows.map(Agency.fromUserRow).toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return agencies;
   }
 
-  Future<User?> getAgency(int id, {DatabaseExecutor? txn}) async {
-    final db = await _exec(txn);
-    final rows = await db.query('users',
-        where: "id = ? AND role = 'AGENCE'", whereArgs: [id]);
-    return rows.isEmpty ? null : User.fromMap(rows.first);
-  }
-
-  Future<int> countVehiclesOfAgency(int id, {DatabaseExecutor? txn}) =>
-      _count('vehicles', 'agency_id = ?', [id], txn);
-
-  Future<List<String>> getCities({DatabaseExecutor? txn}) async {
+  Future<Agency?> getAgency(String id, {DatabaseExecutor? txn}) async {
     final db = await _exec(txn);
     final rows = await db.query(
       'users',
-      columns: ['adresse_agence'],
-      where:
-          "role = 'AGENCE' AND statut = 'ACTIF' AND adresse_agence IS NOT NULL AND adresse_agence != ''",
-      distinct: true,
+      where: "id = ? AND role = 'AGENCE'",
+      whereArgs: [agencyKey(id)],
     );
-    final cities = <String>{};
-    for (final row in rows) {
-      final addr = (row['adresse_agence'] as String?)?.trim();
-      if (addr != null && addr.isNotEmpty) {
-        final parts = addr.split(',');
-        cities.add(parts.last.trim());
-      }
-    }
-    final list = cities.toList()..sort();
-    return list;
+    return rows.isEmpty ? null : Agency.fromUserRow(rows.first);
   }
+
+  Future<int> countVehiclesOfAgency(String id, {DatabaseExecutor? txn}) =>
+      _count('vehicles', 'agency_id = ?', [agencyKey(id)], txn);
 
   // ------------------------------------------------------------- Catégories
 
@@ -159,10 +151,14 @@ class FleetRepository {
   ///
   /// [clientView] : seulement les véhicules validés, ni en maintenance, ni
   /// hors service, ni archivés, d'une agence active. [scopeAgencyId] : seulement la flotte de cette agence.
+  /// [includeMaintenance] (avec [clientView]) : garde aussi les véhicules en
+  /// maintenance, que le catalogue client affiche avec la mention
+  /// « En maintenance ».
   Future<List<FleetVehicle>> searchVehicles(
     VehicleFilter filter, {
     bool clientView = false,
-    int? scopeAgencyId,
+    bool includeMaintenance = false,
+    String? scopeAgencyId,
     DatabaseExecutor? txn,
   }) async {
     final db = await _exec(txn);
@@ -170,13 +166,16 @@ class FleetRepository {
     final args = <Object?>[];
 
     if (clientView) {
+      final hidden = includeMaintenance
+          ? "('horsService', 'archive')"
+          : "('maintenance', 'horsService', 'archive')";
       where.add("v.validation = 'valide' "
-          "AND v.status NOT IN ('maintenance', 'horsService', 'archive') "
+          'AND v.status NOT IN $hidden '
           "AND a.statut = 'ACTIF'");
     }
     if (scopeAgencyId != null) {
       where.add('v.agency_id = ?');
-      args.add(scopeAgencyId);
+      args.add(agencyKey(scopeAgencyId));
     }
     final query = filter.query.trim().toLowerCase();
     if (query.isNotEmpty) {
@@ -197,11 +196,18 @@ class FleetRepository {
     }
     if (filter.agencyId != null) {
       where.add('v.agency_id = ?');
-      args.add(filter.agencyId);
+      args.add(agencyKey(filter.agencyId!));
     }
     if (filter.city != null) {
-      where.add('a.adresse_agence LIKE ?');
-      args.add('%${filter.city}%');
+      // La ville vient de l'adresse du compte agence (voir Agency.fromUser).
+      final city = filter.city!.toLowerCase();
+      final ids = [
+        for (final agency in await getAgencies(txn: txn))
+          if (agency.city.toLowerCase() == city) agencyKey(agency.id),
+      ];
+      if (ids.isEmpty) return const <FleetVehicle>[];
+      where.add('v.agency_id IN (${List.filled(ids.length, '?').join(', ')})');
+      args.addAll(ids);
     }
     if (filter.fuel != null) {
       where.add('v.fuel = ?');
@@ -263,7 +269,7 @@ class FleetRepository {
   }
 
   Future<List<FleetVehicle>> getVehicles({
-    int? agencyId,
+    String? agencyId,
     bool includeArchived = true,
     DatabaseExecutor? txn,
   }) async {
@@ -272,7 +278,7 @@ class FleetRepository {
     final args = <Object?>[];
     if (agencyId != null) {
       where.add('agency_id = ?');
-      args.add(agencyId);
+      args.add(agencyKey(agencyId));
     }
     if (!includeArchived) where.add("status != 'archive'");
     final rows = await db.query(
@@ -329,7 +335,8 @@ class FleetRepository {
     return rows.map(VehicleDocument.fromMap).toList();
   }
 
-  Future<List<VehicleDocument>> getAllDocuments({DatabaseExecutor? txn}) async {
+  Future<List<VehicleDocument>> getAllDocuments(
+      {DatabaseExecutor? txn}) async {
     final db = await _exec(txn);
     final rows = await db.query('vehicle_documents');
     return rows.map(VehicleDocument.fromMap).toList();
@@ -337,20 +344,8 @@ class FleetRepository {
 
   Future<VehicleDocument?> getDocument(int id, {DatabaseExecutor? txn}) async {
     final db = await _exec(txn);
-    final rows = await db
-        .query('vehicle_documents', where: 'id = ?', whereArgs: [id]);
-    return rows.isEmpty ? null : VehicleDocument.fromMap(rows.first);
-  }
-
-  Future<VehicleDocument?> getDocumentByType(
-      String vehicleId, DocumentType type,
-      {DatabaseExecutor? txn}) async {
-    final db = await _exec(txn);
-    final rows = await db.query(
-      'vehicle_documents',
-      where: 'vehicle_id = ? AND type = ?',
-      whereArgs: [vehicleId, type.name],
-    );
+    final rows =
+        await db.query('vehicle_documents', where: 'id = ?', whereArgs: [id]);
     return rows.isEmpty ? null : VehicleDocument.fromMap(rows.first);
   }
 
@@ -374,7 +369,7 @@ class FleetRepository {
 
   // ------------------------------------------------------- Indisponibilités
 
-  Future<List<UnavailabilityPeriod>> getUnavailabilities(String vehicleId,
+  Future<List<UnavailabilityPeriod>> getPeriods(String vehicleId,
       {DatabaseExecutor? txn}) async {
     final db = await _exec(txn);
     final rows = await db.query(
@@ -386,11 +381,7 @@ class FleetRepository {
     return rows.map(UnavailabilityPeriod.fromMap).toList();
   }
 
-  Future<List<UnavailabilityPeriod>> getPeriods(String vehicleId,
-          {DatabaseExecutor? txn}) =>
-      getUnavailabilities(vehicleId, txn: txn);
-
-  Future<UnavailabilityPeriod?> getUnavailability(int id,
+  Future<UnavailabilityPeriod?> getPeriod(int id,
       {DatabaseExecutor? txn}) async {
     final db = await _exec(txn);
     final rows =
@@ -398,9 +389,7 @@ class FleetRepository {
     return rows.isEmpty ? null : UnavailabilityPeriod.fromMap(rows.first);
   }
 
-  Future<UnavailabilityPeriod?> getPeriod(int id, {DatabaseExecutor? txn}) =>
-      getUnavailability(id, txn: txn);
-
+  /// Premières périodes qui chevauchent [start, end] (bornes incluses).
   Future<List<UnavailabilityPeriod>> overlappingPeriods(
     String vehicleId,
     DateTime start,
@@ -424,25 +413,24 @@ class FleetRepository {
     return rows.map(UnavailabilityPeriod.fromMap).toList();
   }
 
-  Future<int> insertUnavailability(UnavailabilityPeriod period,
+  Future<int> insertPeriod(UnavailabilityPeriod period,
       {DatabaseExecutor? txn}) async {
     final db = await _exec(txn);
     return db.insert('unavailabilities', period.toMap());
   }
 
-  Future<int> insertPeriod(UnavailabilityPeriod period,
-          {DatabaseExecutor? txn}) =>
-      insertUnavailability(period, txn: txn);
-
-  Future<void> deleteUnavailability(int id, {DatabaseExecutor? txn}) async {
+  Future<void> deletePeriod(int id, {DatabaseExecutor? txn}) async {
     final db = await _exec(txn);
     await db.delete('unavailabilities', where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<void> deletePeriod(int id, {DatabaseExecutor? txn}) =>
-      deleteUnavailability(id, txn: txn);
+  // -------------------------------------------------------------- Historique
 
-  // ------------------------------------------------------------- Historique
+  Future<void> insertHistory(HistoryEntry entry,
+      {DatabaseExecutor? txn}) async {
+    final db = await _exec(txn);
+    await db.insert('vehicle_history', entry.toMap());
+  }
 
   Future<List<HistoryEntry>> getHistory(String vehicleId,
       {DatabaseExecutor? txn}) async {
@@ -456,56 +444,38 @@ class FleetRepository {
     return rows.map(HistoryEntry.fromMap).toList();
   }
 
-  Future<void> insertHistory(HistoryEntry entry,
-      {DatabaseExecutor? txn}) async {
-    final db = await _exec(txn);
-    await db.insert('vehicle_history', entry.toMap());
-  }
-
   // ---------------------------------------------------------------- Favoris
 
-  Future<Set<String>> getFavorites({DatabaseExecutor? txn}) async {
+  Future<Set<String>> getFavoriteIds({DatabaseExecutor? txn}) async {
     final db = await _exec(txn);
-    final rows = await db.query('favorites');
-    return {for (final r in rows) r['vehicle_id'] as String};
+    final rows = await db.query('favorites', columns: ['vehicle_id']);
+    return rows.map((r) => r['vehicle_id'] as String).toSet();
   }
 
-  Future<Set<String>> getFavoriteIds({DatabaseExecutor? txn}) =>
-      getFavorites(txn: txn);
-
-  Future<bool> isFavorite(String vehicleId, {DatabaseExecutor? txn}) async {
-    final db = await _exec(txn);
-    final rows = await db.query('favorites',
-        where: 'vehicle_id = ?', whereArgs: [vehicleId]);
-    return rows.isNotEmpty;
-  }
-
-  Future<void> addFavorite(String vehicleId, DateTime now,
+  Future<void> addFavorite(String vehicleId, DateTime at,
       {DatabaseExecutor? txn}) async {
     final db = await _exec(txn);
     await db.insert(
       'favorites',
-      {'vehicle_id': vehicleId, 'created_at': now.toIso8601String()},
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      {'vehicle_id': vehicleId, 'created_at': at.toIso8601String()},
+      conflictAlgorithm: ConflictAlgorithm.ignore,
     );
   }
 
   Future<void> removeFavorite(String vehicleId,
       {DatabaseExecutor? txn}) async {
     final db = await _exec(txn);
-    await db
-        .delete('favorites', where: 'vehicle_id = ?', whereArgs: [vehicleId]);
+    await db.delete('favorites',
+        where: 'vehicle_id = ?', whereArgs: [vehicleId]);
   }
 
-  // ---------------------------------------------------------------- Helpers
+  // ------------------------------------------------------------------ Outils
 
-  Future<int> _count(String table, String? where, List<Object?>? args,
+  Future<int> _count(String table, String where, List<Object?> args,
       DatabaseExecutor? txn) async {
     final db = await _exec(txn);
     final result = await db.rawQuery(
-      'SELECT COUNT(*) as n FROM $table${where == null ? '' : ' WHERE $where'}',
-      args,
-    );
+        'SELECT COUNT(*) AS c FROM $table WHERE $where', args);
     return Sqflite.firstIntValue(result) ?? 0;
   }
 }

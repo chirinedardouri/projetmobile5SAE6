@@ -1,12 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../data/fleet_database.dart';
 import '../data/fleet_repository.dart';
 import '../domain/actor.dart';
-import '../../users/domain/user.dart';
+import '../domain/agency.dart';
 import '../domain/document_alert.dart';
 import '../domain/enums.dart';
 import '../domain/fleet_dates.dart';
+import '../domain/fleet_event.dart';
 import '../domain/fleet_exceptions.dart';
 import '../domain/fleet_vehicle.dart';
 import '../domain/history_entry.dart';
@@ -50,7 +53,16 @@ class FleetService extends ChangeNotifier {
 
   final FleetRepository _repo;
   final DateTime Function() _clock;
-  int _idSequence = 0;
+  final StreamController<FleetEvent> _events =
+      StreamController<FleetEvent>.broadcast();
+
+  /// Événements métier (nouveau véhicule visible, modification par une
+  /// agence, problème de papiers), écoutés par les notifications FCM.
+  Stream<FleetEvent> get events => _events.stream;
+
+  void _emit(FleetEventKind kind, FleetVehicle vehicle, String detail) {
+    if (_events.hasListener) _events.add(FleetEvent(kind, vehicle, detail));
+  }
   Future<void>? _ready;
 
   /// Ouvre la base (création + données de démo au premier lancement)
@@ -78,11 +90,20 @@ class FleetService extends ChangeNotifier {
   // ================================================================ Lecture
 
   /// Recherche limitée à ce que le profil a le droit de voir.
-  Future<List<FleetVehicle>> search(VehicleFilter filter, Actor actor) async {
+  ///
+  /// [withMaintenance] (client seulement) : ajoute les véhicules en
+  /// maintenance, que le catalogue affiche avec la mention « En
+  /// maintenance » sans qu'ils soient louables.
+  Future<List<FleetVehicle>> search(
+    VehicleFilter filter,
+    Actor actor, {
+    bool withMaintenance = false,
+  }) async {
     await ensureReady();
     return _repo.searchVehicles(
       filter,
       clientView: actor.isClient,
+      includeMaintenance: actor.isClient && withMaintenance,
       scopeAgencyId: actor.isAgency ? actor.agencyId : null,
     );
   }
@@ -102,24 +123,24 @@ class FleetService extends ChangeNotifier {
     if (actor.isClient) {
       if (!vehicle.isListedForClients) return null;
       final agency = await _repo.getAgency(vehicle.agencyId);
-      if (agency == null || !agency.isActif) return null;
+      if (agency == null || !agency.isActive) return null;
     }
     return vehicle;
   }
 
-  Future<List<User>> agencies({bool activeOnly = false}) async {
+  Future<List<Agency>> agencies({bool activeOnly = false}) async {
     await ensureReady();
     return _repo.getAgencies(activeOnly: activeOnly);
   }
 
-  Future<User?> agency(int id) async {
+  Future<Agency?> agency(String id) async {
     await ensureReady();
     return _repo.getAgency(id);
   }
 
-  Future<Map<int, User>> agencyMap() async {
+  Future<Map<String, Agency>> agencyMap() async {
     final list = await agencies();
-    return {for (final a in list) a.id!: a};
+    return {for (final a in list) a.id: a};
   }
 
   Future<List<VehicleCategory>> categories({bool activeOnly = false}) async {
@@ -139,8 +160,15 @@ class FleetService extends ChangeNotifier {
 
   /// Villes des agences actives, triées.
   Future<List<String>> cities() async {
-    await ensureReady();
-    return _repo.getCities();
+    final list = await agencies(activeOnly: true);
+    // Un compte agence sans adresse n'a pas de ville.
+    final result = list
+        .map((a) => a.city)
+        .where((c) => c.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    return result;
   }
 
   Future<List<VehicleDocument>> documents(String vehicleId) async {
@@ -159,9 +187,9 @@ class FleetService extends ChangeNotifier {
   }
 
   /// Nombre de véhicules (archivés compris) par agence : id -> nombre.
-  Future<Map<int, int>> vehicleCountByAgency() async {
+  Future<Map<String, int>> vehicleCountByAgency() async {
     await ensureReady();
-    final counts = <int, int>{};
+    final counts = <String, int>{};
     for (final v in await _repo.getVehicles()) {
       counts.update(v.agencyId, (n) => n + 1, ifAbsent: () => 1);
     }
@@ -203,8 +231,8 @@ class FleetService extends ChangeNotifier {
           '${FleetFormat.dt(category.maxPricePerDay)})');
     }
     final agency = await _repo.getAgency(vehicle.agencyId);
-    if (agency != null && !agency.isActif) {
-      problems.add('Agence ${agency.displayName} désactivée');
+    if (agency != null && !agency.isActive) {
+      problems.add('Agence ${agency.name} désactivée');
     }
     return problems;
   }
@@ -219,9 +247,9 @@ class FleetService extends ChangeNotifier {
     if (agency == null) {
       throw const FleetValidationException('agencyId', 'Agence introuvable.');
     }
-    if (!agency.isActif) {
+    if (!agency.isActive) {
       throw FleetRuleException(
-          "L'agence ${agency.displayName} est désactivée : impossible d'ajouter "
+          "L'agence ${agency.name} est désactivée : impossible d'ajouter "
           'un véhicule.');
     }
     final category = await _requireCategory(draft.categoryId);
@@ -252,7 +280,7 @@ class FleetService extends ChangeNotifier {
     };
     final now = _clock();
     final vehicle = FleetVehicle(
-      id: 'veh_${now.microsecondsSinceEpoch}_${++_idSequence}',
+      id: 'veh_${now.microsecondsSinceEpoch}',
       agencyId: candidate.agencyId,
       categoryId: candidate.categoryId,
       brand: candidate.brand,
@@ -292,6 +320,12 @@ class FleetService extends ChangeNotifier {
       );
     });
     notifyListeners();
+    if (vehicle.validation == ValidationStatus.valide) {
+      _emit(FleetEventKind.nouveauVehicule, vehicle, 'Nouveau véhicule');
+    } else if (actor.isAgency) {
+      _emit(FleetEventKind.modificationAgence, vehicle,
+          'Nouveau véhicule à valider');
+    }
     return vehicle;
   }
 
@@ -391,6 +425,9 @@ class FleetService extends ChangeNotifier {
       }
     });
     notifyListeners();
+    if (actor.isAgency) {
+      _emit(FleetEventKind.modificationAgence, saved, 'Fiche modifiée');
+    }
     return saved;
   }
 
@@ -456,6 +493,10 @@ class FleetService extends ChangeNotifier {
       );
     });
     notifyListeners();
+    if (actor.isAgency) {
+      _emit(FleetEventKind.modificationAgence, updated,
+          'Statut : ${current.status.label} → ${next.label}');
+    }
     return updated;
   }
 
@@ -549,13 +590,16 @@ class FleetService extends ChangeNotifier {
       );
     });
     notifyListeners();
+    if (approve) {
+      _emit(FleetEventKind.nouveauVehicule, updated, 'Nouveau véhicule');
+    }
     return updated;
   }
 
   /// Transfert d'un véhicule vers une autre agence (administrateur).
   Future<FleetVehicle> transferVehicle(
     String vehicleId,
-    int toAgencyId,
+    String toAgencyId,
     Actor actor, {
     String? comment,
   }) async {
@@ -579,8 +623,8 @@ class FleetService extends ChangeNotifier {
     if (target == null) {
       throw const FleetNotFoundException('Agence de destination introuvable.');
     }
-    if (!target.isActif) {
-      throw FleetRuleException("L'agence « ${target.displayName} » est désactivée.");
+    if (!target.isActive) {
+      throw FleetRuleException("L'agence ${target.name} est désactivée.");
     }
     final booking = await _upcomingReservation(vehicleId);
     if (booking != null) {
@@ -600,8 +644,8 @@ class FleetService extends ChangeNotifier {
           actor,
           HistoryAction.transfert,
           field: 'Agence',
-          oldValue: source?.displayName ?? '${current.agencyId}',
-          newValue: target.displayName,
+          oldValue: source?.name ?? current.agencyId,
+          newValue: target.name,
           comment: comment,
         ),
         txn: txn,
@@ -642,6 +686,9 @@ class FleetService extends ChangeNotifier {
       await _repo.deleteVehicle(vehicleId, txn: txn);
     });
     notifyListeners();
+    if (actor.isAgency) {
+      _emit(FleetEventKind.modificationAgence, current, 'Véhicule supprimé');
+    }
   }
 
   // ============================================================== Documents
@@ -695,6 +742,16 @@ class FleetService extends ChangeNotifier {
     });
     await _enforceCompliance(vehicleIds: {vehicle.id});
     notifyListeners();
+    final state = saved.stateAt(_clock());
+    if (state == DocumentState.expire ||
+        state == DocumentState.expireBientot) {
+      _emit(FleetEventKind.problemePapiers, vehicle,
+          '${saved.type.label} : ${state.label.toLowerCase()} '
+          '(${_expiryLabel(saved).toLowerCase()})');
+    } else if (actor.isAgency) {
+      _emit(FleetEventKind.modificationAgence, vehicle,
+          '${saved.type.label} mis à jour');
+    }
     return saved;
   }
 
@@ -721,6 +778,10 @@ class FleetService extends ChangeNotifier {
       );
     });
     notifyListeners();
+    if (actor.isAgency) {
+      _emit(FleetEventKind.modificationAgence, vehicle,
+          '${document.type.label} supprimé');
+    }
   }
 
   /// Notifications « papiers » : documents expirés ou qui expirent dans
@@ -729,7 +790,7 @@ class FleetService extends ChangeNotifier {
   /// (ou une agence avec [agencyId]). Les véhicules archivés sont ignorés.
   Future<List<DocumentAlert>> documentAlerts(
     Actor actor, {
-    int? agencyId,
+    String? agencyId,
     int withinDays = VehicleDocument.warningDays,
   }) async {
     await ensureReady();
@@ -881,7 +942,7 @@ class FleetService extends ChangeNotifier {
       return 'Véhicule en statut « ${vehicle.status.label} ».';
     }
     final agency = await _repo.getAgency(vehicle.agencyId);
-    if (agency == null || !agency.isActif) return 'Agence indisponible.';
+    if (agency == null || !agency.isActive) return 'Agence indisponible.';
     final from = FleetDates.dayOnly(start);
     final to = FleetDates.dayOnly(end);
     if (to.isBefore(from)) return 'Dates invalides.';
@@ -934,6 +995,34 @@ class FleetService extends ChangeNotifier {
     final visible =
         await search(const VehicleFilter(), const Actor.client());
     return visible.where((v) => ids.contains(v.id)).toList();
+  }
+
+  // ================================================================ Agences
+  //
+  // Les comptes agence sont créés, modifiés, activés et supprimés dans le
+  // module Utilisateurs. Ces deux vérifications gardent les règles de la
+  // flotte : le module Utilisateurs peut les appeler (via VehicleApi)
+  // avant de désactiver ou de supprimer un compte agence.
+
+  /// Null si l'agence peut être désactivée, sinon la raison
+  /// (un véhicule occupé ne peut pas perdre son agence).
+  Future<String?> agencyDeactivationProblem(String agencyId) async {
+    await ensureReady();
+    final engaged = (await _repo.getVehicles(agencyId: agencyId))
+        .where((v) => v.status.isEngaged)
+        .length;
+    if (engaged == 0) return null;
+    return '$engaged véhicule(s) de cette agence sont occupés : '
+        'désactivation impossible pour le moment.';
+  }
+
+  /// Null si le compte agence peut être supprimé, sinon la raison.
+  Future<String?> agencyDeletionProblem(String agencyId) async {
+    await ensureReady();
+    final count = await _repo.countVehiclesOfAgency(agencyId);
+    if (count == 0) return null;
+    return 'Cette agence possède $count véhicule(s) : transférez-les ou '
+        "désactivez l'agence.";
   }
 
   // ============================================================= Catégories
@@ -1006,7 +1095,7 @@ class FleetService extends ChangeNotifier {
   // ============================================================ Statistiques
 
   /// Chiffres de la flotte entière, ou d'une seule agence.
-  Future<FleetStats> computeStats({int? agencyId}) async {
+  Future<FleetStats> computeStats({String? agencyId}) async {
     await ensureReady();
     final vehicles =
         await _repo.getVehicles(agencyId: agencyId, includeArchived: false);
@@ -1014,7 +1103,7 @@ class FleetService extends ChangeNotifier {
       for (final c in await _repo.getCategories()) c.id: c.name,
     };
     final agencyNames = {
-      for (final a in await _repo.getAgencies()) a.id!: a.displayName,
+      for (final a in await _repo.getAgencies()) a.id: a.name,
     };
     final byStatus = <VehicleStatus, int>{};
     final byCategory = <String, int>{};
@@ -1186,6 +1275,9 @@ class FleetService extends ChangeNotifier {
           txn: txn,
         );
       });
+      _emit(FleetEventKind.problemePapiers, updated,
+          '${doc.type.label} expirée le '
+          '${FleetDates.display(doc.expiryDate!)} : passé « Hors service »');
       changed++;
     }
     return changed;

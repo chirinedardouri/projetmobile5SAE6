@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
-import '../../../users/domain/user.dart';
-import '../../domain/actor.dart';
+import '../../domain/agency.dart';
 import '../../domain/fleet_vehicle.dart';
 import '../../services/fleet_service.dart';
+import '../../services/vehicle_session.dart';
 import '../admin/admin_widgets.dart';
 import '../feedback.dart';
 
@@ -39,10 +39,10 @@ class _TransferSheetState extends State<_TransferSheet> {
   final FleetService _service = FleetService.instance;
   final TextEditingController _comment = TextEditingController();
 
-  List<User> _targets = const [];
-  Map<int, int> _counts = const {};
-  User? _source;
-  int? _selectedId;
+  List<Agency> _targets = const [];
+  Map<String, int> _counts = const {};
+  Agency? _source;
+  String? _selectedId;
   bool _loading = true;
   bool _saving = false;
   String? _error;
@@ -64,14 +64,14 @@ class _TransferSheetState extends State<_TransferSheet> {
       final all = await _service.agencies();
       final counts = await _service.vehicleCountByAgency();
       if (!mounted) return;
-      User? source;
+      Agency? source;
       for (final a in all) {
         if (a.id == widget.vehicle.agencyId) source = a;
       }
       setState(() {
         _source = source;
         _targets = all
-            .where((a) => a.id != widget.vehicle.agencyId && a.isActif)
+            .where((a) => a.id != widget.vehicle.agencyId && a.isActive)
             .toList();
         _counts = counts;
         _loading = false;
@@ -98,13 +98,13 @@ class _TransferSheetState extends State<_TransferSheet> {
       await _service.transferVehicle(
         widget.vehicle.id,
         targetId,
-        const Actor.admin(),
+        VehicleSession.instance.actor,
         comment: comment.isEmpty ? null : comment,
       );
       if (!mounted) return;
       Navigator.of(context).pop();
       showFleetSnack(widget.messenger,
-          '${widget.vehicle.fullName} transféré vers ${target.displayName}');
+          '${widget.vehicle.fullName} transféré vers ${target.name}');
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -128,7 +128,7 @@ class _TransferSheetState extends State<_TransferSheet> {
           AdminSheetTitle(
             'Transférer le véhicule',
             subtitle: '${vehicle.fullName} · ${vehicle.registrationPlate}'
-                '${_source == null ? '' : '\nAgence actuelle : ${_source!.displayName}'}',
+                '${_source == null ? '' : '\nAgence actuelle : ${_source!.name}'}',
           ),
           const SizedBox(height: 14),
           if (_loading)
@@ -138,94 +138,65 @@ class _TransferSheetState extends State<_TransferSheet> {
             )
           else if (occupied)
             const AdminBanner(
-              color: AppColors.orange,
-              background: AppColors.orangeLight,
-              icon: Icons.lock_clock_outlined,
-              text: 'Ce véhicule est occupé (réservation ou location en cours). '
-                  'Attendez son retour pour le transférer.',
+              text: 'Ce véhicule est occupé (réservation ou location en '
+                  'cours) : le transfert sera possible quand il sera libre.',
             )
           else if (_targets.isEmpty)
             const AdminBanner(
-              color: AppColors.textMuted,
-              background: AppColors.sectionBg,
-              icon: Icons.storefront_outlined,
-              text: 'Aucune autre agence active disponible.',
+              text: 'Aucune autre agence active pour le moment. Ajoutez ou '
+                  'réactivez une agence dans « Agences ».',
             )
           else ...[
             const Text(
-              'Choisir la nouvelle agence',
+              "Choisissez l'agence de destination",
               style: TextStyle(
                 color: AppColors.textPrimary,
-                fontWeight: FontWeight.w800,
-                fontSize: 14,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
               ),
             ),
-            const SizedBox(height: 10),
-            for (final agency in _targets) ...[
-              _AgencyOption(
-                agency: agency,
-                vehicleCount: _counts[agency.id] ?? 0,
-                selected: _selectedId == agency.id,
-                onTap: _saving
-                    ? null
-                    : () => setState(() => _selectedId = agency.id),
+            const SizedBox(height: 8),
+            for (final agency in _targets)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _AgencyOption(
+                  agency: agency,
+                  vehicleCount: _counts[agency.id] ?? 0,
+                  selected: _selectedId == agency.id,
+                  onTap: _saving
+                      ? null
+                      : () => setState(() => _selectedId = agency.id),
+                ),
               ),
-              const SizedBox(height: 8),
-            ],
-            const SizedBox(height: 10),
+            const AdminFieldLabel('Commentaire (facultatif)'),
             TextField(
               controller: _comment,
-              decoration: InputDecoration(
-                labelText: 'Motif du transfert (facultatif)',
-                hintText: 'Ex. renfort haute saison, rééquilibrage de flotte…',
-                filled: true,
-                fillColor: AppColors.cardSubtleBg,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: const BorderSide(color: AppColors.cardBorder),
-                ),
-              ),
+              enabled: !_saving,
+              decoration: adminInputDecoration(
+                  hint: 'Ex. : forte demande à Sousse cet été'),
             ),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _error!,
-                style: const TextStyle(
-                  color: AppColors.redDark,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
-                ),
-              ),
-            ],
-            const SizedBox(height: 18),
-            FilledButton(
-              onPressed: (_selectedId == null || _saving) ? null : _transfer,
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.primaryNavy,
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            AdminBanner.error(text: _error!),
+          ],
+          const SizedBox(height: 16),
+          if (!_loading && !occupied && _targets.isNotEmpty)
+            AdminPrimaryButton(
+              label: 'Transférer',
+              icon: Icons.swap_horiz_rounded,
+              loading: _saving,
+              onPressed: _selectedId == null ? null : _transfer,
+            )
+          else
+            OutlinedButton(
+              onPressed: () => Navigator.of(context).pop(),
+              style: OutlinedButton.styleFrom(
                 minimumSize: const Size.fromHeight(50),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              child: _saving
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Text(
-                      'Confirmer le transfert',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-            ),
-          ],
-          const SizedBox(height: 10),
-          if (occupied || _targets.isEmpty)
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
               child: const Text('Fermer'),
             ),
         ],
@@ -242,16 +213,13 @@ class _AgencyOption extends StatelessWidget {
     required this.onTap,
   });
 
-  final User agency;
+  final Agency agency;
   final int vehicleCount;
   final bool selected;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final initials = agency.displayName.isNotEmpty
-        ? agency.displayName.substring(0, 1).toUpperCase()
-        : 'A';
     return Material(
       color: selected ? AppColors.blueLight : Colors.white,
       borderRadius: BorderRadius.circular(14),
@@ -273,7 +241,7 @@ class _AgencyOption extends StatelessWidget {
                 radius: 18,
                 backgroundColor: AppColors.primaryNavy,
                 child: Text(
-                  initials,
+                  agency.initials,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
@@ -287,14 +255,14 @@ class _AgencyOption extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      agency.displayName,
+                      agency.name,
                       style: const TextStyle(
                         color: AppColors.textPrimary,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                     Text(
-                      '${agency.adresseAgence ?? ''} · $vehicleCount véhicule(s)',
+                      '${agency.city} · $vehicleCount véhicule(s)',
                       style: const TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 12,

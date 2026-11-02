@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/enums.dart';
+import '../../integrations/vehicle_links.dart';
 
 /// Pastille de statut : point de couleur + libellé.
 class StatusChip extends StatelessWidget {
@@ -32,6 +33,29 @@ class StatusChip extends StatelessWidget {
               compact: compact,
             )
           : StatusChip.vehicle(status, compact: compact);
+
+  /// Statut côté client complété par les modules Réservations et
+  /// Maintenance (voir VehicleLinks) : « Réservé » ou « En maintenance ».
+  factory StatusChip.forAvailability(
+    VehicleStatus status,
+    ClientAvailability? availability, {
+    bool compact = false,
+  }) =>
+      switch (availability) {
+        ClientAvailability.reserve => StatusChip(
+            label: ClientAvailability.reserve.label,
+            color: VehicleStatus.reserve.color,
+            background: VehicleStatus.reserve.background,
+            compact: compact,
+          ),
+        ClientAvailability.maintenance => StatusChip(
+            label: ClientAvailability.maintenance.label,
+            color: VehicleStatus.maintenance.color,
+            background: VehicleStatus.maintenance.background,
+            compact: compact,
+          ),
+        _ => StatusChip.forClient(status, compact: compact),
+      };
 
   factory StatusChip.validation(ValidationStatus validation,
           {bool compact = false}) =>

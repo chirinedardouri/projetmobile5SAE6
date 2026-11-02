@@ -28,3 +28,7 @@
 
 # Widget Preview related
 .widget_preview/
+
+# Clé secrète Firebase (notifications FCM) : ne jamais publier
+assets/fcm/service_account.json
+**/*service_account*.json

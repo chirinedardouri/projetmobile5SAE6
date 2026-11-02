@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1090157948594",
+    "project_id": "ekrili-karhba",
+    "storage_bucket": "ekrili-karhba.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1090157948594:android:0c02a62f25c83b91f463ab",
+        "android_client_info": {
+          "package_name": "com.example.flutter_mobile_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWGBpojJlygIfTfAfwPU6tmSmNdsBc5n8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

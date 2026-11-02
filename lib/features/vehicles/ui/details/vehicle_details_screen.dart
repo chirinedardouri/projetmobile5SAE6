@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../domain/actor.dart';
-import '../../../users/domain/user.dart';
+import '../../domain/agency.dart';
 import '../../domain/enums.dart';
 import '../../domain/fleet_dates.dart';
 import '../../domain/fleet_vehicle.dart';
@@ -11,7 +11,9 @@ import '../../domain/history_entry.dart';
 import '../../domain/unavailability_period.dart';
 import '../../domain/vehicle_category.dart';
 import '../../domain/vehicle_document.dart';
+import '../../integrations/vehicle_links.dart';
 import '../../services/fleet_service.dart';
+import '../../services/vehicle_session.dart';
 import '../admin/validation_screen.dart';
 import '../feedback.dart';
 import '../manage/document_sheet.dart';
@@ -42,7 +44,10 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
   final FleetService _service = FleetService.instance;
 
   FleetVehicle? _vehicle;
-  User? _agency;
+
+  /// Client : « Réservé » / « En maintenance » d'après les autres modules.
+  ClientAvailability? _availability;
+  Agency? _agency;
   VehicleCategory? _category;
   List<UnavailabilityPeriod> _periods = const [];
   List<HistoryEntry> _history = const [];
@@ -59,7 +64,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
   int _photoIndex = 0;
   int _requestId = 0;
 
-  Actor get _actor => const Actor.admin();
+  Actor get _actor => VehicleSession.instance.actor;
   bool get _isClient => _actor.isClient;
 
   @override
@@ -100,9 +105,12 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
           !_isClient && vehicle.validation != ValidationStatus.valide
               ? await _service.validationProblems(vehicle.id)
               : const <String>[];
+      final availability =
+          _isClient ? await VehicleLinks.availabilityOf(vehicle) : null;
       if (!mounted || request != _requestId) return;
       setState(() {
         _vehicle = vehicle;
+        _availability = availability;
         _agency = agency;
         _category = category;
         _periods = periods;
@@ -201,7 +209,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
         Row(
           children: [
             _isClient
-                ? StatusChip.forClient(vehicle.status)
+                ? StatusChip.forAvailability(vehicle.status, _availability)
                 : StatusChip.vehicle(vehicle.status),
             if (!_isClient &&
                 vehicle.validation != ValidationStatus.valide) ...[
@@ -574,7 +582,7 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
     );
   }
 
-  void _showContact(User agency) {
+  void _showContact(Agency agency) {
     final messenger = ScaffoldMessenger.of(context);
     showModalBottomSheet<void>(
       context: context,
@@ -606,13 +614,17 @@ class _VehicleDetailsScreenState extends State<VehicleDetailsScreen> {
             children: [
               ListTile(
                 title: Text(
-                  agency.displayName,
+                  agency.name,
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
-                subtitle: Text(agency.adresseAgence ?? ''),
+                subtitle: Text(
+                  [agency.address, agency.city]
+                      .where((s) => s.isNotEmpty)
+                      .join(', '),
+                ),
               ),
-              if (agency.telephone.isNotEmpty)
-                row(Icons.phone_outlined, 'Téléphone', agency.telephone),
+              if (agency.phone.isNotEmpty)
+                row(Icons.phone_outlined, 'Téléphone', agency.phone),
               if (agency.email.isNotEmpty)
                 row(Icons.mail_outline_rounded, 'E-mail', agency.email),
               const SizedBox(height: 12),
@@ -924,14 +936,11 @@ class _PriceCard extends StatelessWidget {
 class _AgencyCard extends StatelessWidget {
   const _AgencyCard({required this.agency, required this.onContact});
 
-  final User agency;
+  final Agency agency;
   final VoidCallback onContact;
 
   @override
   Widget build(BuildContext context) {
-    final initials = agency.displayName.isNotEmpty
-        ? agency.displayName.substring(0, 1).toUpperCase()
-        : 'A';
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -950,7 +959,7 @@ class _AgencyCard extends StatelessWidget {
             ),
             alignment: Alignment.center,
             child: Text(
-              initials,
+              agency.initials,
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w800,
@@ -963,7 +972,7 @@ class _AgencyCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  agency.displayName,
+                  agency.name,
                   style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontWeight: FontWeight.w800,
@@ -971,7 +980,7 @@ class _AgencyCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  agency.adresseAgence ?? '',
+                  agency.city,
                   style: const TextStyle(
                     color: AppColors.textMuted,
                     fontSize: 12,
