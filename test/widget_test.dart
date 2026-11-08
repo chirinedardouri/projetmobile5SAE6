@@ -1,11 +1,20 @@
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+
 import 'package:ekrili_karhba/features/users/domain/user.dart';
 import 'package:ekrili_karhba/features/users/services/user_service.dart';
 import 'package:ekrili_karhba/features/users/ui/login_screen.dart';
 import 'package:ekrili_karhba/main.dart';
 
+import 'package:ekrili_karhba/controllers/car_recommendation_controller.dart';
+import 'package:ekrili_karhba/views/recommendations/ai_car_recommender_view.dart';
+
 void main() {
+
+  // USER MODULE TESTS
+
   setUp(() {
     UserService.instance.setCurrentUser(
       User(
@@ -32,11 +41,13 @@ void main() {
 
     await tester.tap(find.byType(FloatingActionButton));
     await tester.pumpAndSettle();
+
     expect(find.text('Nouvelle maintenance'), findsOneWidget);
   });
 
   testWidgets('displays login screen when user is not authenticated', (tester) async {
     UserService.instance.setCurrentUser(null);
+
     await tester.pumpWidget(const MaterialApp(home: LoginScreen()));
 
     expect(find.text('Ekrili Karhba'), findsOneWidget);
@@ -51,5 +62,28 @@ void main() {
     expect(find.text('Créer un compte'), findsOneWidget);
     expect(find.text('Client'), findsOneWidget);
     expect(find.text('Agence'), findsOneWidget);
+  });
+
+  // VEHICLES MODULE TESTS
+
+  testWidgets('AiCarRecommenderView displays input fields and button',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider(
+            create: (_) => CarRecommendationController(),
+          ),
+        ],
+        child: const MaterialApp(
+          home: AiCarRecommenderView(),
+        ),
+      ),
+    );
+
+    expect(find.text('AI Smart Car Recommender'), findsOneWidget);
+    expect(find.text('Recommander 7 Véhicules'), findsOneWidget);
+    expect(find.byType(ElevatedButton), findsWidgets);
+    expect(find.byType(TextField), findsWidgets);
   });
 }

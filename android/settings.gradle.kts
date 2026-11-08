@@ -1,11 +1,17 @@
+
 pluginManagement {
     val flutterSdkPath = run {
         val properties = java.util.Properties()
         val localPropertiesFile = file("local.properties")
+
         require(localPropertiesFile.exists()) {
             "Flutter SDK not configured. Install Flutter, then run `flutter pub get` from the project root."
         }
-        localPropertiesFile.inputStream().use { properties.load(it) }
+
+        localPropertiesFile.inputStream().use {
+            properties.load(it)
+        }
+
         properties.getProperty("flutter.sdk")
             ?: error("flutter.sdk is missing from android/local.properties")
     }
@@ -27,4 +33,3 @@ plugins {
 }
 
 include(":app")
-

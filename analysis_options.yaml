@@ -1,11 +1,16 @@
+
+include: package:flutter_lints/flutter.yaml
+
 analyzer:
   exclude:
     - build/**
     - android/**
+    - ios/**
     - web/**
-include: package:flutter_lints/flutter.yaml
+    - windows/**
+    - macos/**
+    - linux/**
 
 linter:
   rules:
     avoid_print: true
-

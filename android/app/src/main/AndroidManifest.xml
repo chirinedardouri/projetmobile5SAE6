@@ -1,10 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Notifications FCM (module Véhicules), Android 13 et plus -->
+
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    
     <application
         android:label="Ekrili Karhba"
         android:name="${applicationName}"
         android:icon="@android:drawable/sym_def_app_icon">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -33,4 +36,12 @@
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@drawable/ic_notification" />
     </application>
+
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+    </queries>
 </manifest>

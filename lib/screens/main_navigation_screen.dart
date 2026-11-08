@@ -5,6 +5,7 @@ import '../features/users/ui/profile_screen.dart';
 import '../features/vehicles/ui/vehicles_entry_screen.dart';
 import 'maintenance/maintenance_dashboard_screen.dart';
 import 'maintenance/maintenance_form_screen.dart';
+import '../views/reservations/reservation_home_view.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
@@ -19,7 +20,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   final List<Widget> _screens = [
     const AdminUsersScreen(),
     const VehiclesEntryScreen(),
-    const _PlaceholderScreen(title: 'Réservations'),
+    const ReservationHomeView(),
     const MaintenanceDashboardScreen(),
     const ProfileScreen(),
   ];
@@ -32,7 +33,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         children: _screens,
       ),
       // Onglets Dashboard (0), Véhicules (1) et Profil (4) : pas de bouton + de maintenance.
-      floatingActionButton: (_currentIndex == 0 || _currentIndex == 1 || _currentIndex == 4)
+      // Le bouton + de maintenance n'apparaît que sur l'onglet Maintenance (3).
+      floatingActionButton: _currentIndex != 3
           ? null
           : Padding(
         padding: const EdgeInsets.only(bottom: 24.0, right: 8.0),
